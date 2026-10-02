@@ -108,7 +108,7 @@ Press `Enter` on a row to jump to that entry.
 
 ## Clipboard
 
-Copied secrets are cleared from the clipboard after 20 seconds, when you lock, and when you quit. If you've copied something else in the meantime, it's left alone. Windows **clipboard history** (`Win+V`) keeps its own copy of everything you copy, so turn it off in Settings if that matters to you.
+Copied secrets are cleared from the clipboard after 20 seconds, when you lock, and when you quit. If you've copied something else in the meantime, it's left alone. On Windows, copied secrets are also marked so that **clipboard history** (`Win+V`) and cloud clipboard sync skip them, the same way KeePass does it. Some third-party clipboard managers ignore these marks.
 
 ## Hidden until you reveal them
 
@@ -138,6 +138,7 @@ The lockout only slows down someone typing at your computer. Anyone who controls
 - **On disk:** nothing is stored in plaintext. A wrong password and a tampered file both fail with the same error.
 - **Saving:** writes are atomic (temp file, then rename). The previous version is kept as `vault.json.bak`.
 - **Locking:** the vault locks after 5 idle minutes. Only key presses, clicks, scrolling and pasting count as activity, so the mouse passing over the terminal doesn't keep it open. Locking drops the key and decrypted entries from memory, as far as Python allows.
+- **Memory (Windows):** while the vault is unlocked, your entries are in tvault's memory. At start-up tvault locks down its own process, so other programs running as you, such as ProcDump or Process Hacker, get "access denied" when they try to read that memory. You can still see and end it with Task Manager, `taskkill` or `Stop-Process`. This is a speed bump, not a wall: an administrator can still read the memory, and malware running as you could record your keystrokes instead. If the protection can't be turned on, tvault shows a warning when it starts.
 - **Crash reports:** if the app ever crashes, the error report leaves out the program's variables. Textual's default report includes them, which could print your master password or decrypted entries into the terminal scrollback.
 - **Tampered files:** the key-derivation settings in `vault.json` are checked before use (at most 20 passes, 2 GiB of memory and 16 lanes). An edited file gets a clean "invalid key settings" error, rather than a crash or a run that tries to use all your memory.
 - **One window per vault:** a second `tvault` on the same vault refuses to start ("already open in another tvault window"). Otherwise the two would silently overwrite each other's changes. The lock (`vault.json.lock`) is held by the operating system and released automatically when `tvault` exits, even after a crash.

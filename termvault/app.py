@@ -8,14 +8,15 @@ import time
 from pathlib import Path
 from typing import Any
 
-import pyperclip
 from textual import events
 from textual.app import App
 from textual.binding import Binding
 from textual.timer import Timer
 
+from . import clipboard
 from .guard import AttemptGuard
 from .lockfile import VaultInUseError, VaultLock
+from .memguard import protect_process
 from .screens.main import MainScreen
 from .screens.unlock import UnlockScreen
 from .vault import Vault, default_vault_path
@@ -44,9 +45,13 @@ class TermVaultApp(App):
         self._last_activity = time.monotonic()
         self._clipboard_value: str | None = None
         self._clipboard_timer: Timer | None = None
+        self.memory_protection_error: str | None = None
 
     def on_mount(self) -> None:
         self.push_screen(UnlockScreen())
+        if self.memory_protection_error:
+            self.notify(f"Memory protection is off: {self.memory_protection_error}",
+                        severity="warning", timeout=10)
         if self.idle_lock > 0:
             self.set_interval(5, self._check_idle)
 
@@ -95,9 +100,9 @@ class TermVaultApp(App):
             self._clipboard_timer.stop()
             self._clipboard_timer = None
         try:
-            pyperclip.copy(value)
+            clipboard.copy(value)
             self._clipboard_value = value
-        except pyperclip.PyperclipException:
+        except clipboard.ClipboardError:
             self.copy_to_clipboard(value)  # OSC 52 fallback; can't be read back or cleared
             self._clipboard_value = None
         if self.clear_after > 0 and self._clipboard_value is not None:
@@ -122,10 +127,10 @@ class TermVaultApp(App):
         if value is None:
             return False
         try:
-            if pyperclip.paste() == value:
-                pyperclip.copy("")
+            if clipboard.paste() == value:
+                clipboard.clear()
                 return True
-        except pyperclip.PyperclipException:
+        except clipboard.ClipboardError:
             pass
         return False
 
@@ -140,6 +145,12 @@ def main(argv: list[str] | None = None) -> None:
                         help="clear copied secrets from the clipboard after this many seconds, "
                              "0 to disable (default: %(default)s)")
     args = parser.parse_args(argv)
+    # Before any secret is in memory: keep other programs from reading it.
+    try:
+        protect_process()
+        protection_error = None
+    except OSError as exc:
+        protection_error = str(exc)
     lock = VaultLock(args.vault)
     try:
         lock.acquire()
@@ -147,6 +158,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"tvault: {exc}. Close it there first.", file=sys.stderr)
         sys.exit(1)
     app = TermVaultApp(args.vault, idle_lock=args.lock_after, clear_after=args.clear_after)
+    app.memory_protection_error = protection_error
     try:
         app.run()
     finally:

@@ -219,12 +219,16 @@ class FakeClipboard:
     def paste(self):
         return self.value
 
+    def clear(self):
+        self.value = ""
+
 
 async def test_clipboard_auto_clear(vault_path, monkeypatch):
-    import pyperclip
+    from termvault import clipboard
     clip = FakeClipboard()
-    monkeypatch.setattr(pyperclip, "copy", clip.copy)
-    monkeypatch.setattr(pyperclip, "paste", clip.paste)
+    monkeypatch.setattr(clipboard, "copy", clip.copy)
+    monkeypatch.setattr(clipboard, "paste", clip.paste)
+    monkeypatch.setattr(clipboard, "clear", clip.clear)
 
     app = TermVaultApp(vault_path, kdf=FAST_KDF, idle_lock=0, clear_after=0.3)
     async with app.run_test(size=(120, 40)) as pilot:
@@ -250,6 +254,16 @@ async def test_clipboard_auto_clear(vault_path, monkeypatch):
         await pilot.press("ctrl+l")
         await wait_for(pilot, lambda: isinstance(app.screen, UnlockScreen))
         assert clip.value == ""
+
+
+async def test_warns_when_memory_protection_is_off(vault_path, monkeypatch):
+    app = TermVaultApp(vault_path, kdf=FAST_KDF, idle_lock=0)
+    app.memory_protection_error = "memory protection: SetSecurityInfo failed (error 5)"
+    seen = []
+    monkeypatch.setattr(app, "notify", lambda message, **kw: seen.append(message))
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.1)
+    assert any("Memory protection is off" in m for m in seen)
 
 
 async def test_generator_fills_password_field(vault_path):
