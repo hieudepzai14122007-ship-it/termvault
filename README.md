@@ -1,6 +1,17 @@
-# termvault
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/media/termvault-logo.svg">
+    <img src="docs/media/termvault-logo-light.svg" alt="termvault" width="440">
+  </picture>
+</h1>
 
 A local, offline, encrypted password manager that runs in your terminal. It stores logins (with optional 2FA/TOTP codes), credit cards and secure notes in a single encrypted file. It also has a password generator, a password health check, and clears copied secrets from the clipboard automatically.
+
+<p align="center">
+  <a href="docs/media/termvault-promo.mp4">
+    <img src="docs/media/termvault-promo-poster.png" alt="Watch the 33-second termvault promo video" width="720">
+  </a>
+</p>
 
 > **Warning: personal project, not independently reviewed.** termvault uses standard, well-tested building blocks (Argon2id and AES-256-GCM from the `argon2-cffi` and `cryptography` libraries), but no security professional has audited it. Use it at your own risk. If you store real passwords in it, keep a backup in an established password manager as well. Found a problem? Please open an issue.
 
