@@ -1,0 +1,168 @@
+UnlockScreen, ModalScreen {
+    align: center middle;
+}
+
+.dialog {
+    width: 64;
+    height: auto;
+    max-height: 90%;
+    padding: 1 2;
+    border: round $accent;
+    background: $surface;
+}
+
+.dialog.small {
+    width: 50;
+}
+
+.dialog.wide {
+    width: 80;
+    height: 90%;
+}
+
+.dialog > Input, .dialog > Label, .dialog > Button {
+    margin-bottom: 1;
+}
+
+.dialog > Label {
+    width: 100%;
+}
+
+#unlock-title {
+    text-style: bold;
+    color: $accent;
+    content-align: center middle;
+    width: 100%;
+}
+
+#unlock-box Button {
+    width: 100%;
+}
+
+.heading {
+    text-style: bold;
+    color: $accent;
+}
+
+.dim {
+    color: $text-muted;
+}
+
+.errmsg {
+    color: $error;
+}
+
+.buttons {
+    height: auto;
+    align-horizontal: right;
+}
+
+.buttons Button {
+    margin-left: 1;
+}
+
+#form {
+    height: 1fr;
+}
+
+#form TextArea {
+    height: 6;
+}
+
+#sidebar {
+    width: 36;
+    border-right: solid $panel;
+}
+
+#search {
+    margin: 0 0 1 0;
+}
+
+#entries {
+    height: 1fr;
+}
+
+#detail {
+    padding: 1 2;
+}
+
+.row {
+    height: auto;
+}
+
+.col {
+    width: 1fr;
+    height: auto;
+}
+
+.col Input {
+    margin-right: 1;
+}
+
+.field-label {
+    width: auto;
+    padding: 1 1 0 0;
+}
+
+.row Checkbox {
+    width: auto;
+}
+
+.hint {
+    width: 100%;
+    padding-left: 1;
+}
+
+#pw-opts, #pp-opts {
+    height: auto;
+}
+
+#length, #words {
+    width: 10;
+}
+
+#sep {
+    width: 10;
+}
+
+#mode {
+    width: 100%;
+}
+
+#gen-output {
+    height: auto;
+    padding: 0 2;
+    border: tall $accent;
+    text-style: bold;
+}
+
+#gen-info {
+    width: 100%;
+}
+
+#gen-box {
+    height: auto;
+}
+
+#health-table {
+    height: 1fr;
+    margin: 1 0;
+}
+
+#health-summary {
+    height: auto;
+}
+
+#reveal {
+    margin-top: 1;
+}
+
+#titlebar {
+    dock: top;
+    width: 100%;
+    height: 1;
+    background: $panel;
+    color: $text;
+    text-style: bold;
+    content-align: center middle;
+}

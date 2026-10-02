@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "termvault"
+version = "0.1.0"
+description = "A local, encrypted, terminal password manager with secure notes and TOTP."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "textual>=0.80",
+    "cryptography>=42",
+    "argon2-cffi>=23",
+    "pyotp>=2.9",
+    "pyperclip>=1.8",
+    "zxcvbn>=4.4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+tvault = "termvault.app:main"
+
+[tool.setuptools.packages.find]
+include = ["termvault*"]
+
+[tool.setuptools.package-data]
+termvault = ["*.tcss", "*.txt"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
