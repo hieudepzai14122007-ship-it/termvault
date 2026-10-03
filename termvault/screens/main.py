@@ -15,6 +15,8 @@ from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, St
 from .. import cards, totp
 from ..health import strength
 from ..models import TYPE_LABELS, Entry, new_card, new_login, new_note
+from ..crypto import DecryptionError
+from ..vault import VaultLockedError
 from .change_master import ChangeMasterScreen
 from .confirm import ConfirmScreen
 from .edit import EditScreen
@@ -274,8 +276,10 @@ class MainScreen(Screen):
         try:
             fn(*args)
             return True
-        except OSError as exc:
+        except (OSError, ValueError, DecryptionError, VaultLockedError) as exc:
             self.notify(f"Could not save vault: {exc}", severity="error")
+            if not self.vault.unlocked:
+                self.app.run_worker(self.app.action_lock())
             return False
 
     def _open_editor(self, entry: Entry, is_new: bool) -> None:

@@ -11,11 +11,14 @@ from __future__ import annotations
 import os
 import sys
 import time
+import stat
 from pathlib import Path
 from typing import IO
 
+from .fileio import check_regular, private_parent
 
-class VaultInUseError(Exception):
+
+class VaultInUseError(OSError):
     pass
 
 
@@ -25,15 +28,31 @@ class VaultLock:
     WAIT_SECONDS = 2.0
 
     def __init__(self, vault_path: Path) -> None:
-        vault_path = Path(vault_path)
+        vault_path = Path(vault_path).absolute()
+        vault_path = vault_path.parent.resolve() / vault_path.name
         self.path = vault_path.with_name(vault_path.name + ".lock")
         self._file: IO[bytes] | None = None
 
     def acquire(self) -> None:
         if self._file is not None:
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        f = open(self.path, "a+b")
+        private_parent(self.path)
+        check_regular(self.path, missing_ok=True)
+        fd = os.open(self.path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_BINARY", 0), 0o600)
+        f = os.fdopen(fd, "r+b")
+        info = os.fstat(f.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or (os.name == "posix" and info.st_uid != os.getuid())):
+            f.close()
+            raise PermissionError("unsafe vault lock file")
+        if os.name == "posix":
+            os.fchmod(f.fileno(), 0o600)
+        # Windows byte-range locking needs an initial byte; never truncate the
+        # locked byte while another process could be waiting on it.
+        if os.fstat(f.fileno()).st_size == 0:
+            f.write(b"\0")
+            f.flush()
         deadline = time.monotonic() + self.WAIT_SECONDS
         while True:
             try:
@@ -47,10 +66,14 @@ class VaultLock:
                 time.sleep(0.1)
         self._file = f
         # Informational only; the OS lock is what matters.
-        f.seek(0)
-        f.truncate()
-        f.write(str(os.getpid()).encode())
-        f.flush()
+        try:
+            f.seek(0)
+            f.write(str(os.getpid()).encode())
+            f.truncate()
+            f.flush()
+        except OSError:
+            self.release()
+            raise
 
     @staticmethod
     def _lock(f: IO[bytes]) -> None:

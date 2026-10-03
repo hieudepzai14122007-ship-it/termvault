@@ -131,11 +131,14 @@ if sys.platform == "win32":
         with _opened():
             if not _user32.EmptyClipboard():
                 raise ClipboardError("could not clear the clipboard")
-            _put(CF_UNICODETEXT, (text + "\0").encode("utf-16-le"))
+            # Set every privacy marker before publishing the secret. A failed
+            # marker must not leave plaintext behind in an unmarked clipboard.
             for name, value in PRIVACY_FORMATS:
                 fmt = _user32.RegisterClipboardFormatW(name)
-                if fmt:
-                    _put(fmt, value)
+                if not fmt:
+                    raise ClipboardError("could not register clipboard privacy formats")
+                _put(fmt, value)
+            _put(CF_UNICODETEXT, (text + "\0").encode("utf-16-le"))
 
     def paste() -> str:
         with _opened():

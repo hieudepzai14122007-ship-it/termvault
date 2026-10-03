@@ -19,9 +19,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
+import math
 import time
 from pathlib import Path
+
+from . import crypto
+from .fileio import atomic_write, read_bounded
+from .lockfile import VaultLock
 
 FREE_ATTEMPTS = 3  # wrong guesses allowed before lockouts start (for typos)
 BASE_DELAY = 30.0  # seconds; doubles with each further wrong guess
@@ -37,23 +41,24 @@ def default_store_path() -> Path:
 def delay_after(failures: int) -> float:
     if failures <= FREE_ATTEMPTS:
         return 0.0
-    return min(BASE_DELAY * 2 ** (failures - FREE_ATTEMPTS - 1), MAX_DELAY)
+    exponent = min(failures - FREE_ATTEMPTS - 1, 6)
+    return min(BASE_DELAY * 2 ** exponent, MAX_DELAY)
 
 
 def _clean(state: object) -> dict:
     try:
-        return {"failures": int(state["failures"]), "locked_until": float(state["locked_until"])}
-    except (KeyError, TypeError, ValueError):
+        failures, until = state["failures"], state["locked_until"]
+        if type(failures) is not int or not 0 <= failures <= 1000000:
+            return dict(_EMPTY)
+        if type(until) not in (int, float) or not 0 <= until <= 253402300799 or not math.isfinite(until):
+            return dict(_EMPTY)
+        return {"failures": failures, "locked_until": float(until)}
+    except (KeyError, TypeError, ValueError, OverflowError):
         return dict(_EMPTY)
 
 
 def _write_json(path: Path, data: object, indent: int | None = None) -> None:
-    tmp = path.with_suffix(path.suffix + ".guardtmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=indent)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    atomic_write(path, json.dumps(data, indent=indent, allow_nan=False).encode("utf-8"))
 
 
 class AttemptGuard:
@@ -66,7 +71,7 @@ class AttemptGuard:
 
     def _vault_doc(self) -> dict | None:
         try:
-            doc = json.loads(self.vault_path.read_text(encoding="utf-8"))
+            doc = json.loads(read_bounded(self.vault_path, crypto.MAX_VAULT_BYTES))
             return doc if isinstance(doc, dict) and "salt" in doc else None
         except (OSError, ValueError):
             return None
@@ -77,7 +82,7 @@ class AttemptGuard:
 
     def _store(self) -> dict:
         try:
-            data = json.loads(self.store_path.read_text(encoding="utf-8"))
+            data = json.loads(read_bounded(self.store_path, 1024 * 1024))
             return data if isinstance(data, dict) else {}
         except (OSError, ValueError):
             return {}
@@ -92,6 +97,20 @@ class AttemptGuard:
                 "locked_until": max(a["locked_until"], b["locked_until"])}
 
     def _save(self, state: dict | None) -> None:
+        # Coordinate with Vault's short-lived write lock. Without this the guard
+        # could replace a newly saved vault with its older ciphertext snapshot.
+        path = self.vault_path.absolute()
+        path = path.parent.resolve() / path.name
+        lock = VaultLock(path.with_name(path.name + ".write"))
+        try:
+            lock.acquire()
+            self._save_locked(state)
+        except OSError:
+            pass
+        finally:
+            lock.release()
+
+    def _save_locked(self, state: dict | None) -> None:
         """Write state to both places (None clears it). Failures here are ignored:
         the guard must never stop you unlocking your own vault."""
         doc = self._vault_doc()
@@ -142,7 +161,7 @@ class AttemptGuard:
         """
         now = time.time() if now is None else now
         state = self._load()
-        state["failures"] += 1
+        state["failures"] = min(state["failures"] + 1, 1000000)
         delay = delay_after(state["failures"])
         state["locked_until"] = now + delay
         self._save(state)

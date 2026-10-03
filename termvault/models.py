@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 import uuid
+import math
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
@@ -16,7 +17,7 @@ def _now() -> float:
     return time.time()
 
 
-@dataclass
+@dataclass(repr=False)
 class Entry:
     type: EntryType
     title: str
@@ -40,15 +41,38 @@ class Entry:
     card_cvv: str = ""
     card_pin: str = ""
 
+    def __repr__(self) -> str:
+        return "Entry(<redacted>)"
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Entry":
+        if not isinstance(data, dict):
+            raise ValueError("invalid entry")
         known = {f for f in cls.__dataclass_fields__}
         values = {k: v for k, v in data.items() if k in known}
         # Vaults written before password_changed existed: best guess is the last edit.
         values.setdefault("password_changed", values.get("updated", _now()))
+        if not isinstance(values.get("type"), str) or values["type"] not in TYPE_LABELS:
+            raise ValueError("invalid entry type")
+        if not isinstance(values.get("title"), str):
+            raise ValueError("invalid entry title")
+        timestamps = {"created", "updated", "password_changed"}
+        for name, value in values.items():
+            if name in timestamps:
+                if type(value) not in (int, float) or not 0 <= value <= 253402300799:
+                    raise ValueError("invalid entry timestamp")
+                if not math.isfinite(value):
+                    raise ValueError("invalid entry timestamp")
+            elif name == "favorite":
+                if type(value) is not bool:
+                    raise ValueError("invalid favorite flag")
+            elif not isinstance(value, str) or len(value) > 1024 * 1024:
+                raise ValueError("invalid entry text")
+        if "id" in values and (not values["id"] or len(values["id"]) > 128):
+            raise ValueError("invalid entry id")
         return cls(**values)
 
     def matches(self, query: str) -> bool:

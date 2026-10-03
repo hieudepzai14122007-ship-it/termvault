@@ -108,7 +108,7 @@ Press `Enter` on a row to jump to that entry.
 
 ## Clipboard
 
-Copied secrets are cleared from the clipboard after 20 seconds, when you lock, and when you quit. If you've copied something else in the meantime, it's left alone. On Windows, copied secrets are also marked so that **clipboard history** (`Win+V`) and cloud clipboard sync skip them, the same way KeePass does it. Some third-party clipboard managers ignore these marks.
+With a readable clipboard backend, copied secrets are cleared after 20 seconds, when you lock, and when you quit. If the app falls back to terminal OSC 52 copying, it warns that automatic clearing and history protection are unavailable. If you've copied something else in the meantime, it's left alone. On Windows, copied secrets are also marked so that **clipboard history** (`Win+V`) and cloud clipboard sync skip them, the same way KeePass does it. Some third-party clipboard managers ignore these marks.
 
 ## Hidden until you reveal them
 
@@ -120,7 +120,7 @@ Opening an entry in the edit form (`e` or `Enter`) shows its notes in full, beca
 
 Password-cracking tools work on a copy of `vault.json`, outside this app, so the protection has to be built into the file itself:
 
-- **Expensive guesses.** Each guess at the master password costs 512 MiB of memory and about half a second (Argon2id, 3 passes). Because of the memory requirement, a graphics card can only run a few dozen guesses at a time, not billions. Vaults made with older, weaker settings are re-encrypted with these automatically the next time you unlock them.
+- **Expensive guesses.** The default key derivation uses 512 MiB of memory and 3 Argon2id passes. Actual guess speed depends on the hardware and implementation; there is no universal cracking-time guarantee. Vaults made with older, weaker settings are re-encrypted with these automatically the next time you unlock them.
 - **No weak master passwords.** A new or changed master password must be at least 12 characters and rated "Good" or better by zxcvbn, so `Password2024!` and similar won't be accepted. A live strength meter shows you where you stand. If an older vault's master password is weak, you'll get a warning after unlocking, and you can change it with `Ctrl+P`.
 - **Lockout at the keyboard.** You get 3 free tries for typos. After that, each wrong attempt locks the unlock screen for 30s, then 1 min, 2 min, 4 min and so on, up to 15 minutes. It resets when you unlock successfully. The counter is kept in two places, and the higher one wins:
   - `~/.termvault/attempts.json`, keyed to the vault's random salt, so a renamed copy shares the same counter
@@ -155,3 +155,16 @@ The lockout only slows down someone typing at your computer. Anyone who controls
 ## License
 
 MIT, see [LICENSE](LICENSE). The bundled EFF short wordlist is by the Electronic Frontier Foundation and licensed CC BY 3.0 US.
+
+## Security hardening patch
+
+See [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md) for the changes, verification, resource limits, password-change recovery, and remaining security boundaries. The version-1 encrypted file format is preserved. This review is not an independent security certification.
+
+## Optional Windows malware defenses
+
+See [MALWARE_PROTECTION.md](MALWARE_PROTECTION.md) for OS setup, the dedicated Windows build recipe, and the limits of these checks.
+
+- `tvault --protected`: require active Defender, an explicitly protected vault folder and Windows process protection; cap idle locking at 60 seconds and clipboard clearing at 10 seconds.
+- `tvault --scan-file PATH`: request a detection-only Defender scan of one local file, then exit. It never runs the target.
+
+Protected mode may refuse a source/Python deployment under Controlled Folder Access. Do not broadly allow Python to bypass it; use a dedicated executable at a protected installation path. Windows integration and packaging still require native testing. These features cannot prove the computer or a scanned file is malware-free.

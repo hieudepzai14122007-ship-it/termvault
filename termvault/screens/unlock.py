@@ -12,6 +12,7 @@ from textual.timer import Timer
 from textual.widgets import Button, Input, Label, Static
 
 from ..crypto import DecryptionError
+from ..protection import ProtectionError
 from ..guard import FREE_ATTEMPTS, delay_after
 from ..vault import MIN_MASTER_LEN, master_password_problem
 from .widgets import strength_meter
@@ -22,6 +23,7 @@ class UnlockScreen(Screen):
         super().__init__()
         self._countdown: Timer | None = None
         self._lockout_prefix = ""
+        self._busy = False
 
     @property
     def creating(self) -> bool:
@@ -107,10 +109,11 @@ class UnlockScreen(Screen):
         pw_input = self.query_one("#pw", Input)
         pw = pw_input.value
         button = self.query_one("#go", Button)
-        if button.disabled:
+        if button.disabled or self._busy:
             return
+        creating = self.creating
 
-        if self.creating:
+        if creating:
             problem = master_password_problem(pw)
             if problem:
                 self._error(problem)
@@ -125,14 +128,24 @@ class UnlockScreen(Screen):
             action = vault.unlock
 
         button.disabled = True
+        self._busy = True
         self._error("Working...")
         if not self.creating:
             # Count the attempt as wrong up front; a successful unlock resets it. That way
             # force-quitting during the check doesn't give a free guess.
             guard.record_failure()
         try:
+            # Fail closed before deriving a key or opening plaintext entries.
+            await self.app.check_before_unlock()
             # Argon2 is deliberately slow; keep the UI responsive.
             await asyncio.to_thread(action, pw)
+        except ProtectionError as exc:
+            pw_input.value = ""
+            if self.query("#pw2"):
+                self.query_one("#pw2", Input).value = ""
+            self._error(str(exc))
+            button.disabled = False
+            return
         except DecryptionError as exc:
             await asyncio.sleep(1)  # a small fixed cost on every wrong guess
             pw_input.value = ""
@@ -158,10 +171,17 @@ class UnlockScreen(Screen):
             self._error(f"Unexpected error ({type(exc).__name__}). The vault was not opened.")
             button.disabled = False
             return
+        finally:
+            self._busy = False
 
         guard.reset()
-        weak = action is vault.unlock and master_password_problem(pw) is not None
+        weak = not creating and master_password_problem(pw) is not None
+        pw_input.value = ""
+        if self.query("#pw2"):
+            self.query_one("#pw2", Input).value = ""
         self.app.on_unlocked()
+        if vault.backup_warning:
+            self.app.notify(vault.backup_warning, severity="warning", timeout=15)
         if weak:
             # Vaults made before the strength rule may still have a guessable master password.
             self.app.notify("Your master password is easy to guess. Change it with Ctrl+P.",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 import time
 from pathlib import Path
@@ -17,12 +18,16 @@ from . import clipboard
 from .guard import AttemptGuard
 from .lockfile import VaultInUseError, VaultLock
 from .memguard import protect_process
+from .protection import ProtectionError, require_protection, scan_file
 from .screens.main import MainScreen
 from .screens.unlock import UnlockScreen
 from .vault import Vault, default_vault_path
 
 DEFAULT_IDLE_LOCK = 300  # seconds
 DEFAULT_CLIPBOARD_CLEAR = 20  # seconds
+PROTECTED_IDLE_LOCK = 60
+PROTECTED_CLIPBOARD_CLEAR = 10
+PROTECTION_POLL_SECONDS = 30
 
 ACTIVITY_EVENTS = (events.Key, events.Paste, events.MouseDown,
                    events.MouseScrollDown, events.MouseScrollUp)
@@ -36,16 +41,22 @@ class TermVaultApp(App):
 
     def __init__(self, vault_path: Path, idle_lock: int = DEFAULT_IDLE_LOCK,
                  kdf: dict[str, Any] | None = None,
-                 clear_after: int = DEFAULT_CLIPBOARD_CLEAR) -> None:
+                 clear_after: int = DEFAULT_CLIPBOARD_CLEAR,
+                 protected_mode: bool = False) -> None:
         super().__init__()
         self.vault = Vault(vault_path, kdf=kdf)
         self.guard = AttemptGuard(vault_path)
-        self.idle_lock = idle_lock
-        self.clear_after = clear_after
+        self.protected_mode = protected_mode
+        self.idle_lock = (min(idle_lock, PROTECTED_IDLE_LOCK) if idle_lock > 0 else PROTECTED_IDLE_LOCK) \
+            if protected_mode else idle_lock
+        self.clear_after = (min(clear_after, PROTECTED_CLIPBOARD_CLEAR) if clear_after > 0 else PROTECTED_CLIPBOARD_CLEAR) \
+            if protected_mode else clear_after
+        self._protection_check_running = False
         self._last_activity = time.monotonic()
         self._clipboard_value: str | None = None
         self._clipboard_timer: Timer | None = None
         self.memory_protection_error: str | None = None
+        self.memory_protection_verified = False
 
     def on_mount(self) -> None:
         self.push_screen(UnlockScreen())
@@ -54,6 +65,34 @@ class TermVaultApp(App):
                         severity="warning", timeout=10)
         if self.idle_lock > 0:
             self.set_interval(5, self._check_idle)
+        if self.protected_mode:
+            self.set_interval(PROTECTION_POLL_SECONDS, self._start_protection_check)
+            self.notify("Defender checks enabled; these checks cannot prove this computer is malware-free.",
+                        timeout=10)
+
+    async def check_before_unlock(self) -> None:
+        if self.protected_mode:
+            if self.memory_protection_error or not self.memory_protection_verified:
+                raise ProtectionError("Process memory protection failed. Protected mode refuses to unlock.")
+            await asyncio.to_thread(require_protection, self.vault.path.parent)
+
+    def _start_protection_check(self) -> None:
+        if self.vault.unlocked and not self._protection_check_running:
+            self.run_worker(self._poll_protection(), group="protection", exclusive=True)
+
+    async def _poll_protection(self) -> None:
+        if self._protection_check_running or not self.vault.unlocked:
+            return
+        self._protection_check_running = True
+        try:
+            await asyncio.to_thread(require_protection, self.vault.path.parent)
+        except Exception:
+            # Unknown/error status is a reason to lock, never a clean-machine verdict.
+            await self.action_lock()
+            self.notify("Locked: Defender requirements failed or could not be verified. "
+                        "Check Windows Security before unlocking.", severity="error", timeout=15)
+        finally:
+            self._protection_check_running = False
 
     async def on_event(self, event: events.Event) -> None:
         # Only deliberate input counts as activity; the mouse merely passing over the
@@ -86,7 +125,7 @@ class TermVaultApp(App):
             self.notify("Vault re-encrypted with stronger key protection")
 
     async def action_lock(self) -> None:
-        if not self.vault.unlocked:
+        if not self.vault.unlocked and isinstance(self.screen, UnlockScreen):
             return
         self.vault.lock()
         self.clear_clipboard()
@@ -103,8 +142,16 @@ class TermVaultApp(App):
             clipboard.copy(value)
             self._clipboard_value = value
         except clipboard.ClipboardError:
+            if self.protected_mode:
+                self._clipboard_value = None
+                self.notify("Copy refused: a clipboard backend with automatic clearing is unavailable.",
+                            severity="error", timeout=10)
+                return
             self.copy_to_clipboard(value)  # OSC 52 fallback; can't be read back or cleared
             self._clipboard_value = None
+            self.notify("Copied through terminal clipboard; automatic clearing and history protection "
+                        "are unavailable. Clear it manually.", severity="warning", timeout=15)
+            return
         if self.clear_after > 0 and self._clipboard_value is not None:
             self._clipboard_timer = self.set_timer(self.clear_after, self._auto_clear)
             self.notify(f"{label} copied, clears in {self.clear_after}s")
@@ -144,21 +191,47 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--clear-after", type=int, default=DEFAULT_CLIPBOARD_CLEAR, metavar="SECONDS",
                         help="clear copied secrets from the clipboard after this many seconds, "
                              "0 to disable (default: %(default)s)")
+    parser.add_argument("--protected", action="store_true",
+                        help="require active Microsoft Defender, a protected vault folder and process protection; "
+                             "cap idle lock at 60s and clipboard clearing at 10s (Windows)")
+    parser.add_argument("--scan-file", type=Path, metavar="PATH",
+                        help="run a detection-only Defender scan of one file, then exit (Windows)")
     args = parser.parse_args(argv)
+    if args.lock_after < 0 or args.clear_after < 0:
+        parser.error("timer values must be nonnegative")
+    if args.scan_file is not None:
+        try:
+            result = scan_file(args.scan_file)
+        except ProtectionError as exc:
+            print(f"tvault: {exc}", file=sys.stderr)
+            raise SystemExit(2)
+        print(result.message)
+        raise SystemExit(0 if result.completed_without_detection else 2)
+    if args.protected:
+        try:
+            require_protection(args.vault.absolute().parent.resolve())
+        except ProtectionError as exc:
+            print(f"tvault: protected mode refused: {exc}", file=sys.stderr)
+            raise SystemExit(2)
     # Before any secret is in memory: keep other programs from reading it.
     try:
         protect_process()
         protection_error = None
     except OSError as exc:
         protection_error = str(exc)
+        if args.protected:
+            print("tvault: protected mode refused: process memory protection failed.", file=sys.stderr)
+            raise SystemExit(2)
     lock = VaultLock(args.vault)
     try:
         lock.acquire()
     except VaultInUseError as exc:
         print(f"tvault: {exc}. Close it there first.", file=sys.stderr)
         sys.exit(1)
-    app = TermVaultApp(args.vault, idle_lock=args.lock_after, clear_after=args.clear_after)
+    app = TermVaultApp(args.vault, idle_lock=args.lock_after, clear_after=args.clear_after,
+                       protected_mode=args.protected)
     app.memory_protection_error = protection_error
+    app.memory_protection_verified = protection_error is None and sys.platform == "win32"
     try:
         app.run()
     finally:

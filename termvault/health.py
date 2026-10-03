@@ -6,7 +6,6 @@ import datetime as dt
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from functools import lru_cache
 
 from zxcvbn import zxcvbn
 
@@ -27,7 +26,6 @@ class Strength:
     crack_time: str
 
 
-@lru_cache(maxsize=256)
 def strength(password: str) -> Strength:
     if not password:
         return Strength(0, "Empty", "", "")

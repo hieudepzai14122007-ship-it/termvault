@@ -18,6 +18,10 @@ from .widgets import strength_meter
 class ChangeMasterScreen(ModalScreen[bool]):
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._busy = False
+
     def compose(self) -> ComposeResult:
         with Vertical(classes="dialog"):
             yield Label("Change master password", classes="heading")
@@ -34,7 +38,8 @@ class ChangeMasterScreen(ModalScreen[bool]):
         self.query_one("#old", Input).focus()
 
     def action_cancel(self) -> None:
-        self.dismiss(False)
+        if not self._busy:
+            self.dismiss(False)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "new":
@@ -52,9 +57,11 @@ class ChangeMasterScreen(ModalScreen[bool]):
         if event.button.id == "go":
             await self._submit()
         else:
-            self.dismiss(False)
+            self.action_cancel()
 
     async def _submit(self) -> None:
+        if self._busy or not self.app.vault.unlocked:
+            return
         old = self.query_one("#old", Input).value
         new = self.query_one("#new", Input).value
         new2 = self.query_one("#new2", Input).value
@@ -67,13 +74,29 @@ class ChangeMasterScreen(ModalScreen[bool]):
             error.update("New passwords do not match.")
             return
         error.update("Working...")
+        self._busy = True
+        self.query_one("#go", Button).disabled = True
+        self.query_one("#cancel", Button).disabled = True
         try:
             await asyncio.to_thread(self.app.vault.change_master, old, new)
         except DecryptionError:
             await asyncio.sleep(1)
-            error.update("Current password is wrong.")
+            error.update("Current password is wrong, or key settings could not be processed.")
             return
         except (OSError, ValueError) as exc:
-            error.update(f"Error: {exc}")
+            if self.is_attached:
+                error.update(f"Error: {exc}")
+            if not self.app.vault.unlocked:
+                await self.app.action_lock()
             return
-        self.dismiss(True)
+        finally:
+            self._busy = False
+            if self.is_attached:
+                for field in ("old", "new", "new2"):
+                    self.query_one(f"#{field}", Input).value = ""
+                self.query_one("#go", Button).disabled = False
+                self.query_one("#cancel", Button).disabled = False
+        if self.is_attached and self.app.vault.unlocked:
+            if self.app.vault.backup_warning:
+                self.app.notify(self.app.vault.backup_warning, severity="warning", timeout=15)
+            self.dismiss(True)
