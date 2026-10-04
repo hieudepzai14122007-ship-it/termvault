@@ -10,7 +10,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Input, Label, ListItem, ListView, Static
+from textual.widgets import Button, Footer, Label, ListItem, ListView, Static
 
 from .. import cards, totp
 from ..health import strength
@@ -22,7 +22,7 @@ from .confirm import ConfirmScreen
 from .edit import EditScreen
 from .generator import GeneratorScreen
 from .health import HealthScreen
-from .widgets import STRENGTH_STYLES
+from .widgets import STRENGTH_STYLES, PrivateInput as Input
 
 MASK = "•" * 10
 ICONS = {"login": "\U0001F511", "note": "\U0001F4DD", "card": "\U0001F4B3"}
@@ -67,13 +67,16 @@ def render_entry(e: Entry, show_secret: bool) -> Text:
             row("Strength", s.label, STRENGTH_STYLES[s.score])
         row("Website", e.url, "underline")
         if e.totp_secret:
-            try:
-                code, left = totp.current_code(e.totp_secret)
-                label("2FA code")
-                t.append(f"{code[:3]} {code[3:]}", style="bold green" if left > 5 else "bold red")
-                t.append(f"  ({left}s)\n", style="dim")
-            except Exception:
-                row("2FA code", "invalid secret", "red")
+            if not show_secret:
+                row("2FA code", HIDDEN, "dim")
+            else:
+                try:
+                    code, left = totp.current_code(e.totp_secret)
+                    label("2FA code")
+                    t.append(f"{code[:3]} {code[3:]}", style="bold green" if left > 5 else "bold red")
+                    t.append(f"  ({left}s)\n", style="dim")
+                except Exception:
+                    row("2FA code", "invalid secret", "red")
     elif e.type == "card":
         row("Name", e.card_name)
         number = cards.format_number(e.card_number) if show_secret else cards.mask_number(e.card_number)
@@ -343,7 +346,12 @@ class MainScreen(Screen):
     def action_copy_totp(self) -> None:
         e = self._current()
         if e and e.type == "login":
-            self._copy(totp.current_code(e.totp_secret)[0] if e.totp_secret else "", "2FA code")
+            try:
+                code = totp.current_code(e.totp_secret)[0] if e.totp_secret else ""
+            except ValueError:
+                self.notify("Cannot copy 2FA code: edit the invalid or unsupported secret.", severity="error")
+                return
+            self._copy(code, "2FA code")
 
     def action_copy_cvv(self) -> None:
         e = self._current()

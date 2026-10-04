@@ -11,12 +11,12 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, TextArea
+from textual.widgets import Button, Label
 
 from .. import cards, totp
 from ..models import TYPE_LABELS, Entry
 from .generator import GeneratorScreen
-from .widgets import strength_meter
+from .widgets import strength_meter, PrivateInput as Input, PrivateTextArea as TextArea
 
 SECRET_FIELDS = "#password, #totp, #cvv, #pin"
 
@@ -150,7 +150,8 @@ class EditScreen(ModalScreen["Entry | None"]):
             secret = val("#totp").strip()
             if secret:
                 if not totp.validate_secret(secret):
-                    return self._fail("2FA secret is not valid base32.", "#totp")
+                    return self._fail("2FA must be valid base32 or a TOTP link using SHA1, "
+                                      "6 digits and a 30-second period.", "#totp")
                 secret = totp.normalize_secret(secret)
             password = val("#password")
             result = replace(

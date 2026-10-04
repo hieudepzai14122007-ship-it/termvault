@@ -15,7 +15,9 @@ from .models import Entry
 STRENGTH_LABELS = ["Very weak", "Weak", "Fair", "Good", "Strong"]
 WEAK_SCORE = 2  # zxcvbn score <= this is flagged
 OLD_DAYS = 365
-_MAX_SCORED_LEN = 100  # zxcvbn gets slow on very long input; 100 chars is plenty strong anyway
+# Current zxcvbn releases reject longer input by default. Only estimate a
+# bounded prefix; never truncate the actual password stored or derived.
+_MAX_SCORED_LEN = 72
 
 
 @dataclass(frozen=True)

@@ -36,7 +36,9 @@ def test_copy_marks_item_private(real_clipboard):
 
 def test_clear_empties_clipboard(real_clipboard):
     clipboard.copy("FAKE-to-be-cleared")
-    clipboard.clear()
+    assert not clipboard.clear_if_matches("different text")
+    assert clipboard.paste() == "FAKE-to-be-cleared"
+    assert clipboard.clear_if_matches("FAKE-to-be-cleared")
     assert clipboard.paste() == ""
     assert clipboard.read_format("CanIncludeInClipboardHistory") is None
 

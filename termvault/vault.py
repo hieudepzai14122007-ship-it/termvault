@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from . import crypto
-from .fileio import CommitUncertainError, atomic_write, read_bounded, sync_directory, check_regular
+from .fileio import (CommitUncertainError, atomic_write, read_bounded, sync_directory,
+                     check_regular, secure_existing_file)
 from .health import strength
 from .lockfile import VaultLock
 from .models import Entry
@@ -176,6 +177,7 @@ class Vault:
         problem = master_password_problem(password)
         if problem:
             raise ValueError(problem)
+        secure_existing_file(self._backup_path(), missing_ok=True)
         salt = crypto.new_salt()
         key = self._derive(password, salt, self.target_kdf)
         self.kdf, self._salt, self._key = dict(self.target_kdf), salt, key
@@ -195,6 +197,7 @@ class Vault:
         # A failed unlock always leaves the object locked.
         self.lock()
         doc = self._read_doc(self.path)
+        secure_existing_file(self._backup_path(), missing_ok=True)
         kdf, salt = crypto.read_header(doc)
         key = self._derive(password, salt, kdf)
         entries = _decode_entries(crypto.decrypt(doc, key))

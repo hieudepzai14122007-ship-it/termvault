@@ -66,7 +66,7 @@ async def test_full_flow(vault_path):
         await wait_for(pilot, lambda: len(app.screen.query_one("#entries", ListView).children) == 1)
         assert entry_titles(app) == ["GitHub"]
 
-        # Password masked by default, revealed with "s"; 2FA code shown.
+        # Password and 2FA code masked by default, revealed with "s".
         text = detail_text(app)
         assert "octocat" in text and "s3cret-pass" not in text and "2FA code" in text
         await pilot.press("s")
@@ -140,7 +140,7 @@ async def test_idle_auto_lock(vault_path):
         await create_vault(pilot)
         app._last_activity -= 1000  # pretend we've been idle
         app._check_idle()
-        await wait_for(pilot, lambda: isinstance(app.screen, UnlockScreen))
+        await wait_for(pilot, lambda: isinstance(app.screen, UnlockScreen) and not app.vault.unlocked)
         assert not app.vault.unlocked
 
 
@@ -222,6 +222,12 @@ class FakeClipboard:
     def clear(self):
         self.value = ""
 
+    def clear_if_matches(self, expected):
+        if self.value != expected:
+            return False
+        self.value = ""
+        return True
+
 
 async def test_clipboard_auto_clear(vault_path, monkeypatch):
     from termvault import clipboard
@@ -229,6 +235,7 @@ async def test_clipboard_auto_clear(vault_path, monkeypatch):
     monkeypatch.setattr(clipboard, "copy", clip.copy)
     monkeypatch.setattr(clipboard, "paste", clip.paste)
     monkeypatch.setattr(clipboard, "clear", clip.clear)
+    monkeypatch.setattr(clipboard, "clear_if_matches", clip.clear_if_matches)
 
     app = TermVaultApp(vault_path, kdf=FAST_KDF, idle_lock=0, clear_after=0.3)
     async with app.run_test(size=(120, 40)) as pilot:

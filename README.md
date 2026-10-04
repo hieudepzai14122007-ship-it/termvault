@@ -85,7 +85,7 @@ In the edit form: `Ctrl+S` saves, `Esc` cancels, `Ctrl+R` shows or hides secret 
 
 ## 2FA codes
 
-When you add or edit a login, paste the site's 2FA secret into the "2FA secret" field. That's the text code shown under the QR code, or an `otpauth://` link. The detail pane then shows the live 6-digit code with a countdown.
+When you add or edit a login, paste the site's 2FA secret into the "2FA secret" field. That's the text code shown under the QR code, or an `otpauth://` link. The live 6-digit code stays hidden until you press **Reveal** (`s`), then appears with a countdown. It hides again after 30 seconds or when you select another entry. Press `t` to copy the current code without displaying it.
 
 ## Credit cards
 
@@ -108,11 +108,17 @@ Press `Enter` on a row to jump to that entry.
 
 ## Clipboard
 
-With a readable clipboard backend, copied secrets are cleared after 20 seconds, when you lock, and when you quit. If the app falls back to terminal OSC 52 copying, it warns that automatic clearing and history protection are unavailable. If you've copied something else in the meantime, it's left alone. On Windows, copied secrets are also marked so that **clipboard history** (`Win+V`) and cloud clipboard sync skip them, the same way KeePass does it. Some third-party clipboard managers ignore these marks.
+With a readable clipboard backend, copied secrets are scheduled for clearing after 20 seconds, when you lock, and when you quit. Copying is refused if the backend fails; TermVault does not fall back to terminal OSC 52 copying. Editor Copy/Cut shortcuts use the same backend and timer, without retaining Textual's separate clipboard cache. Refused Cut/Paste actions leave the field unchanged. If you've copied something else in the meantime, it's left alone. On Windows, copied secrets are also marked so that **clipboard history** (`Win+V`) and cloud clipboard sync skip them. Some third-party clipboard managers ignore these marks. Clearing failures are retried and reported; successful clearing is not guaranteed. Explicitly setting `--clear-after 0` disables the timer in normal mode.
+
+## Private Windows storage
+
+On Windows, new vault files, backups, lock files and temporary files are created with a protected access list granting full access only to your account and SYSTEM. Owned legacy vault files and the managed backup are tightened when opened, and the resulting permissions are checked. Files must be ordinary, singly linked disk files on local storage that preserves and enforces Windows ACLs, such as NTFS. FAT/exFAT and network shares that cannot satisfy these checks are refused.
+
+Existing vault folders must be owned by your account and must not grant other ordinary accounts permission to modify their contents. Unsafe or unverifiable folders are refused; the app does not rewrite an existing folder's permissions. New folders receive private permissions at creation. Use the default folder or a dedicated private folder, not a shared storage folder. These rules do not protect against administrators or programs running as you. Native Windows validation remains required; the included Windows filesystem tests are skipped on Linux.
 
 ## Hidden until you reveal them
 
-Unlocking the vault shows only titles, usernames and websites. Passwords, secure note text, the notes on logins and cards, and card numbers, CVVs and PINs all stay hidden until you press **Reveal** (or `s`). They hide again on their own after 30 seconds, as soon as you move to another entry, or when the vault locks. 2FA codes stay visible because they're only useful together with the hidden password.
+Unlocking the vault shows titles, usernames, websites and limited card details. Passwords, 2FA codes, secure note text, the notes on logins and cards, and full card numbers, CVVs and PINs stay hidden until you press **Reveal** (or `s`). They hide again after 30 seconds, as soon as you move to another entry, or when the vault locks.
 
 Opening an entry in the edit form (`e` or `Enter`) shows its notes in full, because you can't edit what you can't see.
 

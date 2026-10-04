@@ -8,11 +8,11 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label
+from textual.widgets import Button, Label
 
 from ..crypto import DecryptionError
 from ..vault import MIN_MASTER_LEN, master_password_problem
-from .widgets import strength_meter
+from .widgets import strength_meter, PrivateInput as Input
 
 
 class ChangeMasterScreen(ModalScreen[bool]):

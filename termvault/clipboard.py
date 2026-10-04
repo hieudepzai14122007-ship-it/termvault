@@ -26,6 +26,11 @@ class ClipboardError(Exception):
     pass
 
 
+def _validate_text(text: str) -> None:
+    if not isinstance(text, str) or "\0" in text:
+        raise ClipboardError("clipboard text must not contain null characters")
+
+
 if sys.platform == "win32":
     import ctypes
     from ctypes import wintypes as wt
@@ -118,7 +123,10 @@ if sys.platform == "win32":
         if not ptr:
             return None
         try:
-            return ctypes.string_at(ptr, _kernel32.GlobalSize(handle))
+            size = _kernel32.GlobalSize(handle)
+            if size > 4 * 1024 * 1024 + 2:
+                raise ClipboardError("clipboard item exceeds the size limit")
+            return ctypes.string_at(ptr, size)
         finally:
             _kernel32.GlobalUnlock(handle)
 
@@ -128,6 +136,7 @@ if sys.platform == "win32":
             return _get(_user32.RegisterClipboardFormatW(name))
 
     def copy(text: str) -> None:
+        _validate_text(text)
         with _opened():
             if not _user32.EmptyClipboard():
                 raise ClipboardError("could not clear the clipboard")
@@ -153,10 +162,23 @@ if sys.platform == "win32":
             if not _user32.EmptyClipboard():
                 raise ClipboardError("could not clear the clipboard")
 
+    def clear_if_matches(expected: str) -> bool:
+        # Keep the clipboard open across comparison and clearing, so another
+        # application cannot publish unrelated text between these operations.
+        with _opened():
+            data = _get(CF_UNICODETEXT)
+            actual = data.decode("utf-16-le", errors="replace").split("\0", 1)[0] if data else ""
+            if actual != expected:
+                return False
+            if not _user32.EmptyClipboard():
+                raise ClipboardError("could not clear the clipboard")
+            return True
+
 else:
     import pyperclip
 
     def copy(text: str) -> None:
+        _validate_text(text)
         try:
             pyperclip.copy(text)
         except pyperclip.PyperclipException as exc:
@@ -170,3 +192,10 @@ else:
 
     def clear() -> None:
         copy("")
+
+    def clear_if_matches(expected: str) -> bool:
+        # pyperclip has no cross-platform atomic compare-and-clear operation.
+        if paste() != expected:
+            return False
+        clear()
+        return True

@@ -9,13 +9,13 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import Screen
 from textual.timer import Timer
-from textual.widgets import Button, Input, Label, Static
+from textual.widgets import Button, Label, Static
 
 from ..crypto import DecryptionError
 from ..protection import ProtectionError
 from ..guard import FREE_ATTEMPTS, delay_after
 from ..vault import MIN_MASTER_LEN, master_password_problem
-from .widgets import strength_meter
+from .widgets import strength_meter, PrivateInput as Input
 
 
 class UnlockScreen(Screen):
@@ -53,6 +53,22 @@ class UnlockScreen(Screen):
 
     def _error(self, msg: str) -> None:
         self.query_one("#unlock-error", Label).update(msg)
+
+    def clear_passwords(self) -> None:
+        self.query_one("#pw", Input).value = ""
+        if self.query("#pw2"):
+            self.query_one("#pw2", Input).value = ""
+
+    async def _cancelled(self, generation: int) -> bool:
+        if (generation == self.app._unlock_generation
+                and self.is_attached and self.app.is_running):
+            return False
+        await asyncio.to_thread(self.app.vault.lock)
+        if self.is_attached:
+            self.clear_passwords()
+            self._error("Unlock cancelled. The vault is locked.")
+            self.query_one("#go", Button).disabled = False
+        return True
 
     def _set_enabled(self, enabled: bool) -> None:
         self.query_one("#pw", Input).disabled = not enabled
@@ -109,7 +125,7 @@ class UnlockScreen(Screen):
         pw_input = self.query_one("#pw", Input)
         pw = pw_input.value
         button = self.query_one("#go", Button)
-        if button.disabled or self._busy:
+        if button.disabled or self._busy or self.app._locking:
             return
         creating = self.creating
 
@@ -129,6 +145,7 @@ class UnlockScreen(Screen):
 
         button.disabled = True
         self._busy = True
+        generation = self.app._unlock_generation
         self._error("Working...")
         if not self.creating:
             # Count the attempt as wrong up front; a successful unlock resets it. That way
@@ -137,8 +154,17 @@ class UnlockScreen(Screen):
         try:
             # Fail closed before deriving a key or opening plaintext entries.
             await self.app.check_before_unlock()
+            if await self._cancelled(generation):
+                return
             # Argon2 is deliberately slow; keep the UI responsive.
-            await asyncio.to_thread(action, pw)
+            await asyncio.to_thread(self.app.unlock_in_background, action, pw, generation)
+            if await self._cancelled(generation):
+                return
+        except asyncio.CancelledError:
+            self.app._unlock_generation += 1
+            if self.is_attached:
+                self.clear_passwords()
+            raise
         except ProtectionError as exc:
             pw_input.value = ""
             if self.query("#pw2"):

@@ -72,8 +72,11 @@ class AttemptGuard:
     def _vault_doc(self) -> dict | None:
         try:
             doc = json.loads(read_bounded(self.vault_path, crypto.MAX_VAULT_BYTES))
-            return doc if isinstance(doc, dict) and "salt" in doc else None
-        except (OSError, ValueError):
+            # Validate the salt's type before fingerprinting it. str() on a
+            # malicious nested object can itself exhaust the recursion limit.
+            crypto.read_header(doc)
+            return doc
+        except (OSError, ValueError, RecursionError, crypto.DecryptionError):
             return None
 
     @staticmethod
@@ -84,7 +87,7 @@ class AttemptGuard:
         try:
             data = json.loads(read_bounded(self.store_path, 1024 * 1024))
             return data if isinstance(data, dict) else {}
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             return {}
 
     def _load(self) -> dict:

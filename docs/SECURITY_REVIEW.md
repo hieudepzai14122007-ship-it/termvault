@@ -1,5 +1,7 @@
 # TermVault security hardening review
 
+Latest follow-up: 2026-10-04. Combined result: **301 passed, 9 skipped**. See the privacy upgrade below for the latest changes; native Windows enforcement remains unverified.
+
 Date: 2026-10-02
 Input archive commit marker: 38a83fca027d4a116309cf8b03be0c589332ab58
 
@@ -67,7 +69,7 @@ A failed rotation can lose the one-step undo backup while retaining the main vau
 ## Remaining boundaries
 
 - No independent audit, formal verification, penetration test or platform certification was performed.
-- Windows-specific clipboard and process-DACL tests need execution on Windows. Python's POSIX mode bits do not establish Windows privacy ACLs. Windows files rely on the chosen directory's inherited ACLs, and Python does not provide a portable Windows directory-fsync guarantee here.
+- Windows-specific clipboard, process-DACL and filesystem-ACL tests need execution on Windows. The privacy upgrade below supplies explicit Windows file ACLs; Python's POSIX mode bits alone do not establish Windows privacy. Python does not provide a portable Windows directory-fsync guarantee here.
 - Native macOS behavior was not tested. Cloud/network filesystems may have different atomicity and durability semantics.
 - Directory flushing and process-crash tests do not establish a guarantee against every hardware power-loss scenario. Use a normal local filesystem with dependable storage.
 - Python strings, bytes, framework widgets, caller-held Entry copies and temporary plaintext may remain in process memory after references are dropped. Redacting repr and removing the cache reduce retention; they do not prove secure erasure. The patch does not encrypt RAM, swap or hibernation images.
@@ -75,7 +77,7 @@ A failed rotation can lose the one-step undo backup while retaining the main vau
 - The app-level wrong-password guard is unauthenticated and bypassable by anyone controlling the files or running an offline cracker. Its two locations are not a globally atomic shared counter across all vault instances. It is a keyboard deterrent.
 - Write locks are advisory and coordinate this application. A program that ignores them can still alter files. Revision checks reject stale snapshots, but do not prove rollback resistance against an attacker restoring an older valid vault.
 - Changing a password affects the canonical file and managed backup. It cannot revoke external copies, filesystem snapshots, cloud version history or orphaned ciphertext temporary files left by earlier crashes. Secure deletion on SSDs is not promised.
-- OSC 52 cannot be read back or reliably cleared. Clipboard privacy flags depend on OS and other clipboard managers honoring them.
+- OSC 52 cannot be read back or reliably cleared, so the privacy upgrade removes this route from TermVault copying. Clipboard privacy flags depend on OS and other clipboard managers honoring them.
 - AES-GCM still relies on secure randomness and avoiding nonce reuse. The random nonce implementation was preserved; there is no deterministic uniqueness proof or altered cryptographic format.
 
 ## Use and test
@@ -91,8 +93,82 @@ python -m pip install -e '.[dev]'
 python -m pytest -q
 ```
 
-On Windows 11 (Python 3.13), the combined suite was also run natively: 221 passed, 3 skipped (POSIX-only), including the Windows clipboard and process-protection tests. A vault created by the previous version opened, saved and reopened in both directions with the real 512 MiB settings.
+Windows 11 results are recorded in the native Windows verification section at the end of this file.
 
 ## 2026-10-03 extension
 
 The latest archive additionally includes Defender/CFA-backed protected mode, detection-only file scanning, and a dedicated Windows build recipe. See [MALWARE_PROTECTION.md](../MALWARE_PROTECTION.md) for the Kaspersky-inspired design comparison and exact limitations. Forty-four additional policy/integration cases pass using mocked Windows calls; native Windows enforcement, scanner operation and packaging remain unverified.
+
+## 2026-10-04 follow-up bug review
+
+This review found and patched additional failures in the already hardened archive. The encrypted format remains version 1.
+
+| Failure | Result after this patch |
+| --- | --- |
+| Ctrl+L during a background unlock was ignored; cancelling its coroutine could leave the worker unlocked | An unlock generation invalidates pending attempts. Checks run before derivation and before opening the main screen, and the background worker itself drops the key after invalidation, even if its awaiter was cancelled |
+| Shutdown retained the Vault object's key and decrypted-entry references | App teardown invalidates attempts, waits for the vault mutex and locks the object. This drops references; it does not prove memory erasure |
+| Locking while a password-change worker held the mutex could block the UI before hiding details | The lock screen is shown before waiting for the mutex. New unlock submissions are refused while that lock operation is finishing |
+| A failed second copy stopped the previous secret's clearing timer and forgot its ownership | Ownership and the existing timer change only after a successful native copy |
+| A transient clearing error discarded the comparison value and never retried | While the UI runs, three one-second retries retain the comparison value. Exhaustion or shutdown drops it and reports manual clearing; successful clearing cannot be guaranteed |
+| Windows compared clipboard text and cleared it in separate clipboard sessions | The native compare-and-clear helper holds one clipboard lock across both operations. The pyperclip fallback cannot provide this atomic guarantee |
+| A Windows copy containing NUL was truncated, so the full-string clearing comparison never matched | Both the app and clipboard API refuse NUL-containing text before publishing it. Native clipboard reads are bounded to 4 MiB plus a terminator |
+| A temporary-file cleanup error after replacement could hide a committed write, restoring the old in-memory key during rotation | Cleanup no longer masks write outcomes. Errors after exclusive publication are reported as CommitUncertainError, which locks the vault. Best-effort cleanup can still leave encrypted temporary files |
+| TOTP URI parameters were discarded, including algorithm, code length, time period and HOTP type | Only SHA1, six-digit, 30-second TOTP links are accepted by this seed-only model. Other settings, duplicated security parameters and malformed links are rejected. Previously discarded parameters cannot be recovered; re-enter the original provisioning data |
+| An invalid stored TOTP seed crashed the Copy 2FA action | Invalid or unsupported seeds show an error and are not copied |
+| Deep JSON in the guard store or vault crashed before the normal vault parser could reject it; non-string salts could fail during fingerprinting | Guard reads catch recursion failures and validate the encryption header before fingerprinting |
+| Invalid generator settings retained an older password that the Use action could still accept | Failure clears the generated value, output and strength information, so no stale value can be accepted |
+| zxcvbn 4.5.0 rejects input longer than 72 characters, but the app supplied a 100-character prefix | Strength estimation uses at most 72 characters. Full passwords remain unchanged in storage and key derivation |
+
+The new regressions are in `tests/test_review_round2.py`. They include controlled thread interleavings, cancellation of a running unlock awaiter, simulated committed-write cleanup errors, malformed guard input, TOTP parameter ambiguity, clipboard retry exhaustion, and long-password storage round trips. Windows clipboard compare-and-clear ordering is tested with mocked APIs; it still needs native Windows execution. Existing native Windows tests remain skipped on this Linux host.
+
+An auxiliary code-only AST map was used for navigation, but its extraction reported 130 dangling-endpoint edges, 9 self-loops and 29 collapsed directed endpoint pairs. Findings were established from source and executable regressions, not from assumptions about graph completeness.
+
+Sources checked for the compatibility fixes:
+
+- https://github.com/google/google-authenticator/wiki/Key-Uri-Format
+- https://github.com/dwolfhub/zxcvbn-python
+- https://docs.python.org/3/library/asyncio-task.html
+
+The existing malware-protection boundaries remain: this is application hardening, not proof of a clean OS or protection against every keylogger, injected process or privileged attacker. See [MALWARE_PROTECTION.md](../MALWARE_PROTECTION.md) for Windows deployment requirements.
+
+## 2026-10-04 privacy upgrade
+
+This implements the approved Windows storage-permission and secret-exposure upgrades.
+
+| Area | Change | Limit |
+| --- | --- | --- |
+| Windows files | Create files with a protected DACL granting full access to the current user and SYSTEM, using Win32 SECURITY_ATTRIBUTES; verify the actual handle ACL before use | Requires local storage that preserves and enforces ACLs; does not stop administrators or same-user programs |
+| Legacy files | Tighten owned vault files, managed backups and lock files; verify the new ACL after applying it | Does not revoke previously opened handles or protect external copies; unreadable or foreign-owned files are refused |
+| Temporary files | Supply the private ACL at CREATE_NEW, before writing any ciphertext; use random names and noninheritable handles | Existing process/power-loss durability limits remain |
+| Directories | Create new directories with private ACLs under a verified private parent; inspect existing directories without rewriting them | Existing directories must be owned by the user, with no mutation rights for other ordinary accounts; administrators remain privileged |
+| Storage verification | Check handle type, file attributes, hard-link count, owner, DACL and FILE_PERSISTENT_ACLS | Reparse leaf objects, alternate data streams, unverifiable ACLs and unsupported storage are refused; this is not a proof against every path race or compromised OS |
+| Clipboard | Remove the OSC 52 fallback in all modes and override Textual's editor-copy route | Copy can now be unavailable on terminals without a readable backend; clearing may still fail and is reported |
+| Editor clipboard cache | Read clipboard text on demand instead of storing it in Textual's indefinite App._clipboard cache | A comparison value is still held while a cleanup timer/retry is pending; Python erasure is not guaranteed |
+| Cut/Paste failure | Private Input/TextArea widgets preserve text if copy/paste is refused; successful editing retains undo support | Copied plaintext remains accessible to clipboard readers until it is cleared |
+| TOTP visibility | Generate and display the code only while Reveal is active; hide after 30 seconds, entry selection or locking | Direct Copy 2FA still works without displaying the code and uses the same clipboard cleanup |
+| UI lock failure | Drop key/plaintext-entry references in a finally block even if the screen transition fails; propagate failures that leave a live entry screen | Does not prove erasure of widget/framework/caller-held copies |
+
+Final verification: **301 passed, 9 skipped in 35.13 seconds**, Linux, Python 3.12.14. The new `tests/test_privacy_upgrade.py` adds 49 passing policy, failure-path and UI cases plus three native Windows filesystem cases. The existing six Windows clipboard/process tests also remain skipped. This does not establish native Win32 ABI correctness, actual cross-account denial, Defender/CFA enforcement, FAT/network behavior, or Windows packaging correctness. Run the complete suite on Windows against disposable data before using this build with an original vault.
+
+The auto-lock test now waits for both the lock screen and completion of key locking. The previous assertion could end the app while its intentional screen-before-key sequence was still running. Controlled UI-failure cases additionally verify that a transition error cannot skip key locking.
+
+Checked dependencies: cryptography 50.0.2, argon2-cffi 25.1.0, textual 8.2.8, zxcvbn 4.5.0, pyotp 2.10.0, pyperclip 1.11.0, pytest 9.1.1 and pytest-asyncio 1.4.0. No production KDF benchmark or malware-efficacy evaluation was performed. Encryption and the version-1 data format are unchanged; the compatibility changes are storage-permission checks, masked TOTP display, clipboard behavior and refusal of unsupported Windows storage.
+
+Implementation sources:
+
+- https://learn.microsoft.com/en-us/windows/win32/fileio/file-security-and-access-rights
+- https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew
+- https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createdirectoryw
+- https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-getsecurityinfo
+- https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setsecurityinfo
+- https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getvolumeinformationbyhandlew
+- https://docs.python.org/3/library/msvcrt.html#msvcrt.open_osfhandle
+- Installed Textual 8.2.8 source: App.copy_to_clipboard, Input.action_cut and TextArea.action_cut
+
+## Native Windows verification (2026-10-04)
+
+Run on Windows 11, Python 3.13, against disposable data:
+
+- Full suite: 306 passed, 4 skipped (POSIX-only). This includes the native clipboard, process-protection and filesystem-ACL tests that were skipped on Linux. One test fake was missing the new `clear_if_matches` route and was fixed; auto-clear was also confirmed against the real Windows clipboard.
+- A vault created by the previous version opened and saved in this version and reopened in the previous version. Its file ACL was tightened from three inherited rules to the current user and SYSTEM.
+- The default `~/.termvault` folder passed the new directory checks read-only.

@@ -11,11 +11,10 @@ from __future__ import annotations
 import os
 import sys
 import time
-import stat
 from pathlib import Path
 from typing import IO
 
-from .fileio import check_regular, private_parent
+from .fileio import open_private
 
 
 class VaultInUseError(OSError):
@@ -36,18 +35,8 @@ class VaultLock:
     def acquire(self) -> None:
         if self._file is not None:
             return
-        private_parent(self.path)
-        check_regular(self.path, missing_ok=True)
-        fd = os.open(self.path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
-                     | getattr(os, "O_BINARY", 0), 0o600)
+        fd = open_private(self.path, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0))
         f = os.fdopen(fd, "r+b")
-        info = os.fstat(f.fileno())
-        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
-                or (os.name == "posix" and info.st_uid != os.getuid())):
-            f.close()
-            raise PermissionError("unsafe vault lock file")
-        if os.name == "posix":
-            os.fchmod(f.fileno(), 0o600)
         # Windows byte-range locking needs an initial byte; never truncate the
         # locked byte while another process could be waiting on it.
         if os.fstat(f.fileno()).st_size == 0:

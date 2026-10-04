@@ -9,11 +9,11 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Checkbox, Input, Label, RadioButton, RadioSet, Static
+from textual.widgets import Button, Checkbox, Label, RadioButton, RadioSet, Static
 
 from .. import generator
 from ..health import strength
-from .widgets import STRENGTH_STYLES
+from .widgets import STRENGTH_STYLES, PrivateInput as Input
 
 
 def colorize(value: str) -> Text:
@@ -111,6 +111,9 @@ class GeneratorScreen(ModalScreen["str | None"]):
                 self.value = generator.generate_password(length, **opts)
                 bits = generator.password_entropy(length, **opts)
         except ValueError as exc:
+            self.value = ""
+            self.query_one("#gen-output", Static).update("")
+            self.query_one("#gen-info", Label).update("")
             error.update(str(exc).capitalize() + ".")
             return
         error.update("")
